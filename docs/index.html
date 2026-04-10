@@ -64,7 +64,6 @@ header{padding:.75rem 2rem;display:flex;align-items:center;border-bottom:1px sol
 .spacer{flex:1}
 .back-btn{background:none;border:1px solid rgba(255,255,255,.1);color:var(--text);border-radius:8px;padding:.4rem;cursor:pointer;display:flex;transition:all .2s}
 .back-btn:hover{background:rgba(255,255,255,.08)}
-
 .health{display:flex;align-items:center;gap:.4rem;padding:.4rem 1rem;border-radius:20px;font-size:.8rem;font-weight:600}
 .health.critical{background:rgba(239,68,68,.15);color:#f87171}
 .health.warning{background:rgba(245,158,11,.15);color:#fbbf24}
@@ -154,6 +153,32 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .dml-bar-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--blue-h));border-radius:4px;transition:width .6s cubic-bezier(.25,.8,.25,1)}
 .dml-bar-fill.w{background:linear-gradient(90deg,var(--orange),#d97706)}
 
+/* Profile Tab */
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem}
+@media(max-width:900px){.profile-grid{grid-template-columns:1fr}}
+
+.cu-list{display:flex;flex-direction:column;gap:.5rem}
+.cu-row{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem}
+.cu-name{font-size:.82rem;font-weight:500;margin-bottom:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.cu-name .cu-type{font-size:.65rem;color:var(--dim);font-weight:400;margin-right:.4rem;text-transform:uppercase}
+.cu-bars{display:flex;flex-direction:column;gap:.3rem}
+.cu-bar-row{display:flex;align-items:center;gap:.5rem;font-size:.72rem}
+.cu-bar-row span:first-child{width:2.5rem;color:var(--muted);text-align:right;flex-shrink:0}
+.cu-bar-track{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+.cu-bar-fill{height:100%;border-radius:3px}
+.cu-bar-fill.soql{background:linear-gradient(90deg,#3b82f6,#2563eb)}
+.cu-bar-fill.dml{background:linear-gradient(90deg,#10b981,#059669)}
+.cu-stat{color:var(--muted);white-space:nowrap;min-width:3rem}
+
+/* Step Chart */
+.chart-wrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1rem}
+.chart-legend{display:flex;gap:1.25rem;flex-wrap:wrap;margin-bottom:.75rem;font-size:.75rem}
+.legend-item{display:flex;align-items:center;gap:.35rem}
+.legend-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.chart-svg{width:100%;overflow:visible;display:block}
+.chart-tip{position:fixed;background:#1e2330;border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;font-size:.75rem;pointer-events:none;display:none;z-index:100;max-width:260px;line-height:1.6;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.chart-tip strong{display:block;margin-bottom:.25rem;font-size:.8rem;color:var(--text)}
+
 .empty-state{text-align:center;padding:3rem;color:var(--muted)}
 .empty-state .icon{font-size:2.5rem;display:block;margin-bottom:1rem;opacity:.5}
 </style>
@@ -168,13 +193,13 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </header>
   <div class="main" id="main"></div>
 </div>
+<div class="chart-tip" id="chart-tip"></div>
 
 <script>
 // ======================== STATE ========================
 let analysis = null;
 let activeTab = 'insights';
-
-const $ = (id) => document.getElementById(id);
+const $ = id => document.getElementById(id);
 const main = $('main');
 
 // ======================== RENDER ========================
@@ -189,7 +214,6 @@ function showDropZone() {
         <div class="hint">.log &bull; .txt</div>
       </div>
     </div>`;
-
   const dz = $('dz'), fi = $('fi');
   dz.onclick = () => fi.click();
   fi.onchange = () => fi.files[0] && analyze(fi.files[0]);
@@ -252,6 +276,9 @@ function renderResults() {
           <span class="icon">lightbulb</span> Insights & Actions
           ${d.insights.length?`<span class="tab-badge">${d.insights.length}</span>`:''}
         </button>
+        <button class="tab ${activeTab==='profile'?'active':''}" onclick="switchTab('profile')">
+          <span class="icon">analytics</span> Who ate the limits?
+        </button>
         <button class="tab ${activeTab==='limits'?'active':''}" onclick="switchTab('limits')">
           <span class="icon">speed</span> Governor Limits
         </button>
@@ -272,13 +299,13 @@ function switchTab(t) { activeTab = t; renderResults(); }
 function renderTab() {
   const d = analysis, tc = $('tc');
   if (activeTab === 'insights') tc.innerHTML = renderInsights(d);
+  else if (activeTab === 'profile') { tc.innerHTML = renderProfile(d); setupChartTooltip(); }
   else if (activeTab === 'limits') tc.innerHTML = renderLimits(d);
   else if (activeTab === 'soql') tc.innerHTML = renderSoql(d);
   else if (activeTab === 'dml') tc.innerHTML = renderDml(d);
 }
 
-// ======================== TAB RENDERERS ========================
-
+// ======================== TAB: INSIGHTS ========================
 function renderInsights(d) {
   const cards = `
     <div class="summary-row">
@@ -294,7 +321,7 @@ function renderInsights(d) {
     return cards + `<div class="empty-state"><span class="icon">check_circle</span><p>No actionable insights. This log looks clean.</p></div>`;
 
   const sevIcon = {critical:'error',warning:'warning',info:'check_circle'};
-  const catIcon = {soql:'search',dml:'edit',cpu:'speed',heap:'memory',general:'info',design:'architecture'};
+  const catIcon = {soql:'search',dml:'edit',cpu:'speed',heap:'memory',general:'info'};
 
   return cards + d.insights.map(i => `
     <div class="insight ${i.severity}">
@@ -310,9 +337,201 @@ function renderInsights(d) {
     </div>`).join('');
 }
 
+// ======================== TAB: PROFILE ========================
+function renderProfile(d) {
+  const cuHtml = renderCodeUnitBreakdown(d);
+  const chartHtml = renderStepChart(d);
+
+  return `
+    <div class="profile-grid">
+      <div>
+        <div class="section-title"><span class="icon">layers</span>SOQL Consumption by Code Unit</div>
+        <p style="font-size:.8rem;color:var(--dim);margin:-.5rem 0 .75rem">Cumulative — includes nested calls. Sorted by SOQL count.</p>
+        ${cuHtml}
+      </div>
+      <div>
+        <div class="section-title"><span class="icon">show_chart</span>Limit Growth Over Execution</div>
+        <p style="font-size:.8rem;color:var(--dim);margin:-.5rem 0 .75rem">Each point = one LIMIT_USAGE_FOR_NS snapshot. Vertical lines = Code Unit boundaries.</p>
+        ${chartHtml}
+      </div>
+    </div>`;
+}
+
+function renderCodeUnitBreakdown(d) {
+  const units = d.codeUnitStats;
+  if (!units || units.length === 0)
+    return `<div class="empty-state"><span class="icon">info</span><p>No CODE_UNIT_STARTED events found. Ensure APEX_CODE is set to FINE or higher.</p></div>`;
+
+  const maxSoql = Math.max(...units.map(u => u.soql), 1);
+  const maxDml  = Math.max(...units.map(u => u.dml), 1);
+
+  const typeColor = name => {
+    const n = name.toLowerCase();
+    if (n.includes('trigger')) return '#f59e0b';
+    if (n.includes('flow') || n.includes('process')) return '#8b5cf6';
+    if (n.includes('batch') || n.includes('queueable')) return '#10b981';
+    if (n.includes('anon') || n.includes('exec')) return '#3b82f6';
+    return '#94a3b8';
+  };
+
+  return `<div class="cu-list">${units.map(u => {
+    const soqlPct = (u.soql / maxSoql) * 100;
+    const dmlPct  = (u.dml  / maxDml)  * 100;
+    const isBig   = u.soql >= maxSoql * 0.5;
+    const color   = typeColor(u.name);
+    return `
+    <div class="cu-row" style="border-left:3px solid ${color}">
+      <div class="cu-name" title="${esc(u.name)}">${esc(u.name)}</div>
+      <div class="cu-bars">
+        <div class="cu-bar-row">
+          <span>SOQL</span>
+          <div class="cu-bar-track"><div class="cu-bar-fill soql" style="width:${soqlPct}%"></div></div>
+          <span class="cu-stat" style="${isBig?'color:#f87171;font-weight:600':''}">${u.soql}</span>
+        </div>
+        <div class="cu-bar-row">
+          <span>DML</span>
+          <div class="cu-bar-track"><div class="cu-bar-fill dml" style="width:${dmlPct}%"></div></div>
+          <span class="cu-stat">${u.dml}</span>
+        </div>
+        <div style="font-size:.7rem;color:var(--dim);margin-top:.2rem">${u.soqlRows.toLocaleString()} rows &bull; lines ${u.startLine}–${u.endLine}</div>
+      </div>
+    </div>`}).join('')}</div>`;
+}
+
+function renderStepChart(d) {
+  const snaps = d.limitSnapshots;
+  if (!snaps || snaps.length < 2)
+    return `<div class="empty-state"><span class="icon">info</span>
+      <p>Need 2+ LIMIT_USAGE_FOR_NS snapshots to draw the chart.<br>
+      Ensure <code>APEX_PROFILING</code> is set to <code>FINE</code> or higher.</p></div>`;
+
+  // SVG dimensions (viewBox units)
+  const W=900, H=260, PL=45, PR=15, PT=15, PB=40;
+  const cw = W-PL-PR, ch = H-PT-PB;
+  const totalLines = d.linesProcessed || 1;
+
+  const xOf = line => PL + (line / totalLines) * cw;
+  const yOf = pct  => PT + ch - Math.min(pct,100) / 100 * ch;
+
+  // Compute per-snapshot percentages
+  const parsePct = v => {
+    if (!v) return 0;
+    const p = String(v).split(' out of ');
+    return p.length === 2 ? Math.min(parseInt(p[0])||0, parseInt(p[1])||1) / (parseInt(p[1])||1) * 100 : 0;
+  };
+  const processed = snaps.map(s => ({
+    line: s.line,
+    unit: s.unit,
+    soql: parsePct(s.values.soql_queries),
+    cpu:  parsePct(s.values.cpu_time),
+    dml:  parsePct(s.values.dml_statements),
+    heap: parsePct(s.values.heap_size),
+    raw:  s.values
+  }));
+
+  // Build step-line points for a metric
+  function stepPoints(field) {
+    const pts = [];
+    let prevY = null;
+    for (const s of processed) {
+      const x = xOf(s.line), y = yOf(s[field]);
+      if (prevY !== null) pts.push(`${x.toFixed(1)},${prevY.toFixed(1)}`);
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+      prevY = y;
+    }
+    // Extend to right edge
+    if (prevY !== null) pts.push(`${(PL+cw).toFixed(1)},${prevY.toFixed(1)}`);
+    return pts.join(' ');
+  }
+
+  // Y-axis labels
+  const yLabels = [0,25,50,80,100].map(pct => {
+    const y = yOf(pct);
+    const isThreshold = pct===50||pct===80;
+    const col = pct===80?'rgba(239,68,68,.35)':pct===50?'rgba(245,158,11,.25)':'rgba(255,255,255,.06)';
+    return `
+      <line x1="${PL}" y1="${y.toFixed(1)}" x2="${PL+cw}" y2="${y.toFixed(1)}" stroke="${col}" stroke-width="${isThreshold?1:.5}" stroke-dasharray="${isThreshold?'4,3':''}"/>
+      <text x="${(PL-6).toFixed(1)}" y="${(y+4).toFixed(1)}" font-size="10" fill="${isThreshold?(pct===80?'#f87171':'#fbbf24'):'rgba(255,255,255,.3)'}" text-anchor="end">${pct}%</text>`;
+  }).join('');
+
+  // X-axis ticks (5 ticks)
+  const xTicks = [0,.25,.5,.75,1].map(f => {
+    const x = PL + f * cw;
+    const lineNum = Math.round(f * totalLines);
+    return `<line x1="${x.toFixed(1)}" y1="${PT+ch}" x2="${x.toFixed(1)}" y2="${(PT+ch+4).toFixed(1)}" stroke="rgba(255,255,255,.15)" stroke-width="1"/>
+      <text x="${x.toFixed(1)}" y="${(PT+ch+14).toFixed(1)}" font-size="9" fill="rgba(255,255,255,.3)" text-anchor="middle">L${lineNum.toLocaleString()}</text>`;
+  }).join('');
+
+  // CODE_UNIT boundary lines
+  const cuLines = (d.codeUnitStats||[]).slice(0,8).map(u => {
+    const x = xOf(u.startLine);
+    const label = u.name.replace(/.*[|\\\/](.+)$/,'$1').substring(0,18);
+    return `<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${(PT+ch).toFixed(1)}" stroke="rgba(255,255,255,.12)" stroke-width="1" stroke-dasharray="3,4"/>
+      <text x="${(x+3).toFixed(1)}" y="${(PT+10).toFixed(1)}" font-size="8" fill="rgba(255,255,255,.25)">${esc(label)}</text>`;
+  }).join('');
+
+  // Hover hit areas (invisible rects between snapshots)
+  const hitRects = processed.map((s,i) => {
+    const x1 = i===0 ? PL : xOf(processed[i-1].line);
+    const x2 = xOf(s.line);
+    const w = Math.max(x2-x1, 8);
+    const tip = `<strong>Line ${s.line.toLocaleString()} — ${esc(s.unit||'')}</strong>
+SOQL: ${s.soql.toFixed(0)}% &bull; CPU: ${s.cpu.toFixed(0)}% &bull; DML: ${s.dml.toFixed(0)}%${s.heap>0?' &bull; Heap: '+s.heap.toFixed(0)+'%':''}`;
+    return `<rect x="${x1.toFixed(1)}" y="${PT}" width="${w.toFixed(1)}" height="${ch}" fill="transparent" data-tip="${esc(tip)}" style="cursor:crosshair"/>`;
+  }).join('');
+
+  // Data dots at each snapshot
+  const dots = processed.map(s => `
+    <circle cx="${xOf(s.line).toFixed(1)}" cy="${yOf(s.soql).toFixed(1)}" r="3" fill="#3b82f6" opacity=".8"/>
+    <circle cx="${xOf(s.line).toFixed(1)}" cy="${yOf(s.cpu).toFixed(1)}"  r="3" fill="#f59e0b" opacity=".8"/>
+    ${s.dml>0?`<circle cx="${xOf(s.line).toFixed(1)}" cy="${yOf(s.dml).toFixed(1)}" r="3" fill="#10b981" opacity=".8"/>`:''}
+  `).join('');
+
+  const svg = `
+  <svg class="chart-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <!-- Grid & labels -->
+    ${yLabels}
+    ${xTicks}
+    <!-- Code unit boundaries -->
+    ${cuLines}
+    <!-- Axes -->
+    <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${PT+ch}" stroke="rgba(255,255,255,.2)" stroke-width="1"/>
+    <line x1="${PL}" y1="${PT+ch}" x2="${PL+cw}" y2="${PT+ch}" stroke="rgba(255,255,255,.2)" stroke-width="1"/>
+    <!-- Step lines -->
+    <polyline points="${stepPoints('heap')}" fill="none" stroke="#8b5cf6" stroke-width="1.5" opacity=".7" stroke-linejoin="miter"/>
+    <polyline points="${stepPoints('dml')}"  fill="none" stroke="#10b981" stroke-width="1.5" opacity=".8" stroke-linejoin="miter"/>
+    <polyline points="${stepPoints('cpu')}"  fill="none" stroke="#f59e0b" stroke-width="2"   opacity=".9" stroke-linejoin="miter"/>
+    <polyline points="${stepPoints('soql')}" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linejoin="miter"/>
+    <!-- Dots -->
+    ${dots}
+    <!-- Hit areas (must be last) -->
+    ${hitRects}
+  </svg>`;
+
+  return `
+  <div class="chart-wrap">
+    <div class="chart-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div><span>SOQL Queries</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div><span>CPU Time</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div><span>DML Statements</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div><span>Heap</span></div>
+    </div>
+    ${svg}
+  </div>`;
+}
+
+function setupChartTooltip() {
+  const tip = $('chart-tip');
+  document.querySelectorAll('[data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', e => { tip.innerHTML = e.target.dataset.tip; tip.style.display='block'; });
+    el.addEventListener('mousemove', e => { tip.style.left=(e.clientX+12)+'px'; tip.style.top=(e.clientY-40)+'px'; });
+    el.addEventListener('mouseleave', () => { tip.style.display='none'; });
+  });
+}
+
+// ======================== TAB: LIMITS ========================
 function renderLimits(d) {
-  if (!d.limits.length) return `<div class="empty-state"><span class="icon">info</span><p>No LIMIT_USAGE_FOR_NS block found. Check your debug level includes APEX_PROFILING at INFO+.</p></div>`;
-  const icons = {soql_queries:'search',cpu_time:'speed',dml_statements:'edit',dml_rows:'table_rows',heap_size:'memory',callouts:'language',email:'mail',future:'schedule',queueable:'playlist_add_check'};
+  if (!d.limits.length) return `<div class="empty-state"><span class="icon">info</span><p>No LIMIT_USAGE_FOR_NS block found. Check debug level includes APEX_PROFILING at INFO+.</p></div>`;
   return `<div class="limits-grid">${d.limits.map(l => `
     <div class="limit ${l.severity}">
       <div class="limit-hdr">
@@ -324,6 +543,7 @@ function renderLimits(d) {
     </div>`).join('')}</div>`;
 }
 
+// ======================== TAB: SOQL ========================
 function renderSoql(d) {
   let html = '';
   if (d.duplicateSoqlGroups.length) {
@@ -339,6 +559,7 @@ function renderSoql(d) {
   return html;
 }
 
+// ======================== TAB: DML ========================
 function renderDml(d) {
   let html = '';
   if (d.dmlByObject.length) {
@@ -358,14 +579,21 @@ function renderDml(d) {
 async function analyze(file) {
   showLoading(file.name);
   const t0 = performance.now();
+
   const soql=[], dml=[], assignments=[], warnings=[];
   const rawLimits={};
-  let curSoql=null, curDml=null, inLimits=false, lines=0, bytes=0;
+  const limitSnapshots=[];   // NEW: each LIMIT_USAGE_FOR_NS occurrence
+  const codeUnitStack=[];    // NEW: active code unit stack
+  const codeUnitStats=[];    // NEW: finished code units with stats
+
+  let curSoql=null, curDml=null;
+  let inLimits=false, curSnap=null;
+  let lines=0, bytes=0;
   const soqlMap = new Map();
 
   const stream = file.stream().pipeThrough(new TextDecoderStream('utf-8'));
   const reader = stream.getReader();
-  let buf = '', lastProg = 0;
+  let buf='', lastProg=0;
 
   while (true) {
     const {done, value} = await reader.read();
@@ -379,23 +607,56 @@ async function analyze(file) {
       const line = raw.trim();
       lines++;
 
+      // --- Limits block accumulation ---
       if (inLimits) {
-        if (line.includes('|') && line.split('|').length > 2) { inLimits = false; }
-        else { parseLimitLine(line, rawLimits); continue; }
+        if (line.includes('|') && line.split('|').length > 2) {
+          // block ended — save snapshot
+          if (curSnap) {
+            limitSnapshots.push(curSnap);
+            Object.assign(rawLimits, curSnap.values);
+            curSnap = null;
+          }
+          inLimits = false;
+          // fall through to parse this line normally
+        } else {
+          parseLimitLineToObj(line, rawLimits);
+          if (curSnap) parseLimitLineToObj(line, curSnap.values);
+          continue;
+        }
       }
 
       const p = line.split('|');
       if (p.length < 2) continue;
-      const ts = p[0], ev = p[1];
+      const ts=p[0], ev=p[1];
 
-      if (ev === 'LIMIT_USAGE_FOR_NS') inLimits = true;
+      if (ev === 'LIMIT_USAGE_FOR_NS') {
+        inLimits = true;
+        const curUnit = codeUnitStack.length ? codeUnitStack[codeUnitStack.length-1].name : '(root)';
+        curSnap = {line: lines, unit: curUnit, values: {}};
+      }
+      else if (ev === 'CODE_UNIT_STARTED') {
+        // Name: prefer p[4], fall back to p[3], filter [EXTERNAL]
+        const rawName = [p[4],p[3]].find(x=>x&&x.trim()&&!x.startsWith('['))||p[2]||'Unknown';
+        codeUnitStack.push({name:rawName.trim().substring(0,100), startLine:lines, soqlAtStart:soql.length, dmlAtStart:dml.length});
+      }
+      else if (ev === 'CODE_UNIT_FINISHED') {
+        if (codeUnitStack.length) {
+          const u = codeUnitStack.pop();
+          const soqlDelta = soql.length - u.soqlAtStart;
+          const dmlDelta  = dml.length  - u.dmlAtStart;
+          const soqlRows  = soql.slice(u.soqlAtStart).reduce((s,q)=>s+q.rows,0);
+          if (soqlDelta > 0 || dmlDelta > 0) {
+            codeUnitStats.push({name:u.name, startLine:u.startLine, endLine:lines, soql:soqlDelta, dml:dmlDelta, soqlRows});
+          }
+        }
+      }
       else if (ev === 'VARIABLE_ASSIGNMENT' && p.length >= 5)
         assignments.push({time:ts,line:lines,variable:p[3],value:(p[4]||'').substring(0,500)});
       else if (ev === 'DML_BEGIN' && p.length >= 6)
         curDml = {time:ts,line:lines,op:p[3],object:p[4],rows:p[5]};
-      else if (ev === 'DML_END' && curDml) { dml.push(curDml); curDml = null; }
+      else if (ev === 'DML_END' && curDml) { dml.push(curDml); curDml=null; }
       else if (ev === 'SOQL_EXECUTE_BEGIN' && p.length >= 5) {
-        const q = p.length > 5 ? p.slice(4).join('|') : p[4];
+        const q = p.length>5 ? p.slice(4).join('|') : p[4];
         curSoql = {time:ts,line:lines,query:q.trim(),rows:0};
       }
       else if (ev === 'SOQL_EXECUTE_END' && curSoql && p.length >= 4) {
@@ -403,54 +664,58 @@ async function analyze(file) {
         const q = curSoql.query;
         const ex = soqlMap.get(q);
         if (ex) { ex.count++; ex.lines.push(curSoql.line); }
-        else soqlMap.set(q, {count:1, lines:[curSoql.line]});
-        soql.push(curSoql); curSoql = null;
+        else soqlMap.set(q,{count:1,lines:[curSoql.line]});
+        soql.push(curSoql); curSoql=null;
       }
       else if (ev === 'EXCEPTION_THROWN') warnings.push('Exception: '+p.slice(2).join('|').substring(0,200));
       else if (ev === 'FATAL_ERROR') warnings.push('FATAL: '+p.slice(2).join('|').substring(0,200));
     }
 
     const now = performance.now();
-    if (now - lastProg > 80) { updateProgress(Math.min(bytes/file.size*100,99)); lastProg = now; await new Promise(r=>setTimeout(r,0)); }
+    if (now-lastProg > 80) { updateProgress(Math.min(bytes/file.size*100,99)); lastProg=now; await new Promise(r=>setTimeout(r,0)); }
   }
+
+  // Flush any open limits block
+  if (inLimits && curSnap) { limitSnapshots.push(curSnap); Object.assign(rawLimits, curSnap.values); }
 
   updateProgress(100);
 
-  // Build analysis
   const limits = buildLimits(rawLimits);
-  const duplicateSoqlGroups = [], soqlInLoopSuspects = [];
+  const duplicateSoqlGroups=[], soqlInLoopSuspects=[];
   for (const [q,info] of soqlMap) {
     const totalRows = soql.filter(s=>s.query===q).reduce((s,x)=>s+x.rows,0);
-    if (info.count >= 3) soqlInLoopSuspects.push({query:q,count:info.count,line:info.lines[0]});
-    else if (info.count > 1) duplicateSoqlGroups.push({query:q,count:info.count,totalRows});
+    if (info.count>=3) soqlInLoopSuspects.push({query:q,count:info.count,line:info.lines[0]});
+    else if (info.count>1) duplicateSoqlGroups.push({query:q,count:info.count,totalRows});
   }
   duplicateSoqlGroups.sort((a,b)=>b.count-a.count);
   soqlInLoopSuspects.sort((a,b)=>b.count-a.count);
 
-  const dmlByObjMap = new Map();
+  const dmlByObjMap=new Map();
   for (const dd of dml) {
-    const e = dmlByObjMap.get(dd.object)||{ops:0,rows:0};
-    e.ops++; e.rows += parseInt(dd.rows,10)||0;
-    dmlByObjMap.set(dd.object, e);
+    const e=dmlByObjMap.get(dd.object)||{ops:0,rows:0};
+    e.ops++; e.rows+=parseInt(dd.rows,10)||0;
+    dmlByObjMap.set(dd.object,e);
   }
-  const dmlByObject = [...dmlByObjMap.entries()].map(([object,d])=>({object,...d})).sort((a,b)=>b.ops-a.ops);
+  const dmlByObject=[...dmlByObjMap.entries()].map(([object,d])=>({object,...d})).sort((a,b)=>b.ops-a.ops);
+  codeUnitStats.sort((a,b)=>b.soql-a.soql);
 
   const result = {
     soql, dml, assignments, limits, warnings,
-    linesProcessed: lines, fileSize: file.size, fileName: file.name,
-    parseTimeMs: performance.now()-t0,
-    totalSoql: soql.length,
-    totalSoqlRows: soql.reduce((s,q)=>s+q.rows,0),
-    totalDml: dml.length,
+    limitSnapshots, codeUnitStats,
+    linesProcessed:lines, fileSize:file.size, fileName:file.name,
+    parseTimeMs:performance.now()-t0,
+    totalSoql:soql.length,
+    totalSoqlRows:soql.reduce((s,q)=>s+q.rows,0),
+    totalDml:dml.length,
     duplicateSoqlGroups, soqlInLoopSuspects, dmlByObject,
-    insights: []
+    insights:[]
   };
   result.insights = generateInsights(result);
   showResults(result);
 }
 
 // ======================== LIMIT PARSER ========================
-function parseLimitLine(line, limits) {
+function parseLimitLineToObj(line, obj) {
   const map = [
     ['Number of SOQL queries:','soql_queries'],['Maximum CPU time:','cpu_time'],
     ['Number of DML statements:','dml_statements'],['Number of DML rows:','dml_rows'],
@@ -459,71 +724,57 @@ function parseLimitLine(line, limits) {
     ['Number of queueable jobs added to the queue:','queueable']
   ];
   for (const [prefix,key] of map) {
-    if (line.includes(prefix)) { limits[key] = line.split(':').pop().trim(); break; }
+    if (line.includes(prefix)) { obj[key] = line.split(':').pop().trim(); break; }
   }
 }
 
 function buildLimits(raw) {
-  const icons = {soql_queries:'search',cpu_time:'speed',dml_statements:'edit',dml_rows:'table_rows',heap_size:'memory',callouts:'language',email:'mail',future:'schedule',queueable:'playlist_add_check'};
-  const labels = {soql_queries:'SOQL Queries',cpu_time:'CPU Time',dml_statements:'DML Statements',dml_rows:'DML Rows',heap_size:'Heap Size',callouts:'Callouts',email:'Email Invocations',future:'Future Calls',queueable:'Queueable Jobs'};
+  const icons={soql_queries:'search',cpu_time:'speed',dml_statements:'edit',dml_rows:'table_rows',heap_size:'memory',callouts:'language',email:'mail',future:'schedule',queueable:'playlist_add_check'};
+  const labels={soql_queries:'SOQL Queries',cpu_time:'CPU Time',dml_statements:'DML Statements',dml_rows:'DML Rows',heap_size:'Heap Size',callouts:'Callouts',email:'Email Invocations',future:'Future Calls',queueable:'Queueable Jobs'};
   return Object.entries(raw).filter(([k])=>labels[k]).map(([k,v])=>{
-    const parts = v.split(' out of ');
-    const used = parseInt(parts[0],10)||0, max = parts.length>1?parseInt(parts[1],10)||1:1;
-    const percent = Math.round(used/max*100);
+    const parts=v.split(' out of ');
+    const used=parseInt(parts[0],10)||0, max=parts.length>1?parseInt(parts[1],10)||1:1;
+    const percent=Math.round(used/max*100);
     return {name:labels[k],used,max,percent,severity:percent>=80?'critical':percent>=50?'warning':'ok',icon:icons[k]||'info'};
   }).sort((a,b)=>b.percent-a.percent);
 }
 
 // ======================== INSIGHTS ENGINE ========================
 function generateInsights(d) {
-  const insights = [];
-
-  // SOQL in Loop
+  const insights=[];
   for (const s of d.soqlInLoopSuspects) {
-    const maxQ = d.limits.find(l=>l.name==='SOQL Queries')?.max||100;
-    const saved = s.count-1, pct = Math.round(saved/maxQ*100);
+    const maxQ=d.limits.find(l=>l.name==='SOQL Queries')?.max||100;
+    const saved=s.count-1,pct=Math.round(saved/maxQ*100);
     insights.push({id:'soql-loop-'+s.line,severity:'critical',title:`SOQL in Loop Detected (${s.count}x)`,
       description:`The same query executes ${s.count} times, indicating it runs inside a loop. Query: "${s.query.substring(0,80)}..."`,
       impact:`Fixing this saves ${saved} SOQL queries (${pct}% of the ${maxQ} limit). In high-volume scenarios this WILL hit governor limits.`,
       cta:'Move this query BEFORE the loop and use a Map/Set to access results. Use a collection-based WHERE clause (e.g., WHERE Id IN :recordIds).',
       category:'soql',savingsEstimate:`${saved} queries saved`});
   }
-
-  // Duplicate SOQL
   if (d.duplicateSoqlGroups.length) {
-    const total = d.duplicateSoqlGroups.reduce((s,g)=>s+g.count-1,0);
-    const maxQ = d.limits.find(l=>l.name==='SOQL Queries')?.max||100;
+    const total=d.duplicateSoqlGroups.reduce((s,g)=>s+g.count-1,0);
+    const maxQ=d.limits.find(l=>l.name==='SOQL Queries')?.max||100;
     insights.push({id:'dup-soql',severity:'warning',title:`${d.duplicateSoqlGroups.length} Duplicate SOQL Groups`,
       description:`${d.duplicateSoqlGroups.length} unique queries executed multiple times, wasting ${total} query executions.`,
       impact:`Caching results could save up to ${total} SOQL queries (${Math.round(total/maxQ*100)}% of limit). Also reduces CPU time.`,
       cta:'Cache query results in a variable or use a Singleton/Query Cache utility class.',
       category:'soql',savingsEstimate:`${total} queries saved`});
   }
-
-  // Heavy queries
-  const heavy = d.soql.filter(q=>q.rows>=200);
+  const heavy=d.soql.filter(q=>q.rows>=200);
   if (heavy.length) {
-    const totalRows = heavy.reduce((s,q)=>s+q.rows,0);
+    const totalRows=heavy.reduce((s,q)=>s+q.rows,0);
     insights.push({id:'heavy-q',severity:'warning',title:`${heavy.length} Heavy SOQL Queries (200+ rows)`,
       description:`${heavy.length} queries return 200+ rows each. Total: ${totalRows.toLocaleString()} rows. Top query returns ${heavy[0].rows.toLocaleString()} rows.`,
       impact:'Large result sets increase heap usage and CPU time. These can hit the 50,000 row limit or heap limit with more data.',
       cta:'Add more selective WHERE filters, use LIMIT clauses, or implement pagination. SELECT only required fields.',
       category:'soql'});
   }
-
-  // Limits
-  const limitCtas = {
-    'SOQL Queries':'Reduce queries by caching results, removing duplicates, and moving queries out of loops.',
-    'CPU Time':'Optimize Apex logic: avoid nested loops, use Maps instead of repeated list iterations, minimize string concatenation.',
-    'DML Statements':'Collect records into Lists and perform bulk DML outside of loops.',
-    'DML Rows':'Reduce records being modified. Consider Batch Apex for large volumes.',
-    'Heap Size':'Avoid storing large collections in memory. Use SOQL for-loops for chunked processing.'
-  };
+  const limitCtas={'SOQL Queries':'Reduce queries by caching results, removing duplicates, and moving queries out of loops.','CPU Time':'Optimize Apex logic: avoid nested loops, use Maps instead of repeated list iterations.','DML Statements':'Collect records into Lists and perform bulk DML outside of loops.','DML Rows':'Reduce records being modified. Consider Batch Apex for large volumes.','Heap Size':'Avoid storing large collections in memory. Use SOQL for-loops for chunked processing.'};
   for (const l of d.limits) {
     if (l.severity==='critical')
       insights.push({id:'lim-'+l.name,severity:'critical',title:`${l.name} at ${l.percent}% (${l.used}/${l.max})`,
         description:'Governor limit usage is critically high. At risk of failure with more data.',
-        impact:'With more records (bulk data load, batch triggers), this WILL exceed the limit causing LimitException and data loss.',
+        impact:'With more records this WILL exceed the limit causing LimitException and data loss.',
         cta:limitCtas[l.name]||'Review and optimize this governor limit usage.',category:l.name.includes('SOQL')?'soql':l.name.includes('DML')?'dml':l.name.includes('CPU')?'cpu':'general'});
     else if (l.severity==='warning')
       insights.push({id:'lim-'+l.name,severity:'warning',title:`${l.name} at ${l.percent}% (${l.used}/${l.max})`,
@@ -531,21 +782,17 @@ function generateInsights(d) {
         impact:'With 2x the current data volume, this will likely exceed the limit.',
         cta:limitCtas[l.name]||'Review and optimize this governor limit usage.',category:l.name.includes('SOQL')?'soql':l.name.includes('DML')?'dml':l.name.includes('CPU')?'cpu':'general'});
   }
-
-  // DML consolidation
   for (const o of d.dmlByObject) {
     if (o.ops>=3)
       insights.push({id:'dml-'+o.object,severity:'warning',title:`${o.ops} DML Operations on ${o.object}`,
         description:`Multiple DML ops on the same object (${o.ops} times, ${o.rows} total rows). Suggests DML inside a loop.`,
-        impact:`Consolidating into a single DML saves ${o.ops-1} DML statements (${Math.round((o.ops-1)/150*100)}% of the 150 limit).`,
+        impact:`Consolidating saves ${o.ops-1} DML statements (${Math.round((o.ops-1)/150*100)}% of the 150 limit).`,
         cta:'Collect all records into a List and perform a single DML operation outside the loop.',
         category:'dml',savingsEstimate:`${o.ops-1} DML operations saved`});
   }
-
-  // Exceptions
-  const exceptions = d.warnings.filter(w=>w.startsWith('Exception:')||w.startsWith('FATAL:'));
+  const exceptions=d.warnings.filter(w=>w.startsWith('Exception:')||w.startsWith('FATAL:'));
   if (exceptions.length) {
-    const fatals = exceptions.filter(e=>e.startsWith('FATAL:'));
+    const fatals=exceptions.filter(e=>e.startsWith('FATAL:'));
     insights.push({id:'exceptions',severity:fatals.length?'critical':'warning',
       title:`${exceptions.length} Exception(s) Detected${fatals.length?` (${fatals.length} FATAL)`:''}`,
       description:exceptions.slice(0,3).join(' | '),
@@ -553,30 +800,26 @@ function generateInsights(d) {
       cta:'Add try-catch blocks with proper error handling. Log errors to a custom object for monitoring.',
       category:'general'});
   }
-
-  // All good
-  if (!insights.length) {
+  if (!insights.length)
     insights.push({id:'ok',severity:'info',title:'Looking Good!',
       description:'No major issues detected. Governor limits are within safe ranges and no anti-patterns found.',
       impact:'This transaction appears well-optimized for the current data volume.',
-      cta:'Continue monitoring as data volumes grow. Consider load testing with higher record counts.',
-      category:'general'});
-  }
+      cta:'Continue monitoring as data volumes grow.',category:'general'});
 
-  const order = {critical:0,warning:1,info:2};
+  const order={critical:0,warning:1,info:2};
   insights.sort((a,b)=>(order[a.severity]??9)-(order[b.severity]??9));
   return insights;
 }
 
 // ======================== HELPERS ========================
 function scoreColor(d) {
-  const c = d.insights.filter(i=>i.severity==='critical').length;
-  const w = d.insights.filter(i=>i.severity==='warning').length;
-  if (c) return 'critical'; if (w>2) return 'warning'; if (w) return 'moderate'; return 'good';
+  const c=d.insights.filter(i=>i.severity==='critical').length;
+  const w=d.insights.filter(i=>i.severity==='warning').length;
+  if(c)return 'critical'; if(w>2)return 'warning'; if(w)return 'moderate'; return 'good';
 }
-function fmtSize(b) { if(b>=1073741824)return(b/1073741824).toFixed(2)+' GB';if(b>=1048576)return(b/1048576).toFixed(1)+' MB';return(b/1024).toFixed(1)+' KB'; }
-function fmtMs(ms) { return ms>=1000?(ms/1000).toFixed(1)+'s':Math.round(ms)+'ms'; }
-function esc(s) { if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtSize(b){if(b>=1073741824)return(b/1073741824).toFixed(2)+' GB';if(b>=1048576)return(b/1048576).toFixed(1)+' MB';return(b/1024).toFixed(1)+' KB';}
+function fmtMs(ms){return ms>=1000?(ms/1000).toFixed(1)+'s':Math.round(ms)+'ms';}
+function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 // ======================== INIT ========================
 showDropZone();
