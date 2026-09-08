@@ -1,6 +1,6 @@
 # SFDC Log Analyzer
 
-Drop in a Salesforce debug log and analyze it — client-side, no server, no upload.
+Drop in a Salesforce debug log and analyze it — client-side, no server, no upload. Human-in-the-loop: you drive the analysis, nothing runs on its own.
 
 Live: https://gambacloud.github.io/sfdc-log-analyzer/
 
